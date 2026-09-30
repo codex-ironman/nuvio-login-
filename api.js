@@ -1,4 +1,15 @@
-export const clone = value => structuredClone(value);
+export const clone = value => typeof globalThis.structuredClone === 'function' ? globalThis.structuredClone(value) : JSON.parse(JSON.stringify(value));
+export function createId(){
+ if(typeof globalThis.crypto?.randomUUID==='function')return globalThis.crypto.randomUUID();
+ const bytes=new Uint8Array(16);globalThis.crypto.getRandomValues(bytes);bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+ const h=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
+export async function fetchWithTimeout(fetcher,url,options={},timeoutMs=20000){
+ const controller=typeof globalThis.AbortController==='function'?new AbortController():null;
+ let timer;
+ const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{const e=new Error('Nuvio connection timed out. Check your internet connection and try again.');e.name='TimeoutError';reject(e);controller?.abort();},timeoutMs);});
+ try{return await Promise.race([fetcher(url,{...options,...(controller?{signal:controller.signal}:{})}),timeout]);}finally{clearTimeout(timer);}
+}
 export function cleanServer(value) {
  const u=new URL(value);if(u.protocol!=='https:'&&!(u.protocol==='http:'&&['localhost','127.0.0.1'].includes(u.hostname)))throw new Error('Use an HTTPS backend URL.');
  if(u.username||u.password||u.search||u.hash)throw new Error('Backend URL must not contain credentials or query parameters.');
@@ -35,15 +46,15 @@ export class NuvioClient {
  async request(path,body,{auth=true,method='POST',refresh=true}={}){
  if(auth&&!this.session)throw new Error('Connect this account first.');
  if(auth&&refresh&&this.session.expiresAt<Date.now()+30000)await this.refresh();
- let response;try{response=await this.fetcher(this.server+path,{method,headers:{'Content-Type':'application/json',apikey:this.key,Authorization:`Bearer ${auth?this.session.accessToken:this.key}`},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(20000),credentials:'omit',referrerPolicy:'no-referrer'});}catch(e){throw new Error(e.name==='TimeoutError'?'Server request timed out. Refresh before retrying a save.':'Cannot reach Nuvio. Check the backend URL, connection, and server browser-access (CORS) settings.');}
+ let response;try{response=await fetchWithTimeout(this.fetcher,this.server+path,{method,headers:{'Content-Type':'application/json',apikey:this.key,Authorization:`Bearer ${auth?this.session.accessToken:this.key}`},...(body===undefined?{}:{body:JSON.stringify(body)}),credentials:'omit',referrerPolicy:'no-referrer'});}catch(e){throw new Error((e.name==='TimeoutError'||e.name==='AbortError')?'Server request timed out. Refresh before retrying a save.':'Cannot reach Nuvio. Try Wi-Fi or mobile data, and update Android System WebView. Your password was not saved.');}
  const text=await response.text();let result;try{result=text?JSON.parse(text):null;}catch{throw new Error('Server returned an invalid response.');}
- if(!response.ok){const err=new Error(result?.message||result?.error_description||result?.error||`Nuvio request failed (${response.status}).`);err.status=response.status;throw err;}return result;
+ if(!response.ok){const err=new Error(result?.message||result?.msg||result?.error_description||result?.error||`Nuvio request failed (${response.status}).`);err.status=response.status;throw err;}return result;
  }
  rpc(name,body,auth=true){return this.request('/rest/v1/rpc/'+name,body,{auth});}
  setSession(raw){const accessToken=raw.access_token||raw.accessToken,refreshToken=raw.refresh_token||raw.refreshToken;if(!accessToken||!refreshToken)throw new Error('Login response did not include a session.');this.session={accessToken,refreshToken,expiresAt:Date.now()+Number(raw.expires_in||raw.expiresIn||3600)*1000};}
  async login(email,password){const r=await this.request('/auth/v1/token?grant_type=password',{email,password},{auth:false});this.setSession(r);return r;}
  async refresh(){if(this.refreshing)return this.refreshing;this.refreshing=(async()=>{const r=await this.request('/auth/v1/token?grant_type=refresh_token',{refresh_token:this.session.refreshToken},{auth:false});this.setSession(r);})().finally(()=>{this.refreshing=null;});return this.refreshing;}
- async startLink(){this.nonce=crypto.randomUUID();const redirect=this.server==='https://api.nuvio.tv'?'https://nuvio.tv/tv-login':this.server+'/tv-login';const rows=await this.rpc('start_tv_login_session',{p_device_nonce:this.nonce,p_redirect_base_url:redirect},false);const r=Array.isArray(rows)?rows[0]:rows;if(!r?.code)throw new Error('Server did not return a link code.');return {...r,redirect};}
+ async startLink(){this.nonce=createId();const redirect=this.server==='https://api.nuvio.tv'?'https://nuvio.tv/tv-login':this.server+'/tv-login';const rows=await this.rpc('start_tv_login_session',{p_device_nonce:this.nonce,p_redirect_base_url:redirect},false);const r=Array.isArray(rows)?rows[0]:rows;if(!r?.code)throw new Error('Server did not return a link code.');return {...r,redirect};}
  async pollLink(code){const rows=await this.rpc('poll_tv_login_session',{p_code:code,p_device_nonce:this.nonce},false);return Array.isArray(rows)?rows[0]:rows;}
  async exchangeLink(code){const r=await this.request('/functions/v1/tv-logins-exchange',{code,device_nonce:this.nonce},{auth:false});this.setSession(r);return r;}
  async profiles(){const r=await this.rpc('sync_pull_profiles',{});if(!Array.isArray(r))throw new Error('Invalid profiles response.');return r;}
@@ -57,4 +68,4 @@ export class NuvioClient {
  async clearPin(id,currentPin){return this.rpc('clear_profile_pin',{p_profile_id:Number(id),p_current_pin:validatePin(currentPin)});}
  async disconnect(){try{if(this.session)await this.request('/auth/v1/logout',{});}finally{this.session=null;}}
 }
-export async function discover(server,fetcher=globalThis.fetch){const base=cleanServer(server);const r=await fetcher(base+'/.well-known/nuvio',{signal:AbortSignal.timeout(12000),credentials:'omit',referrerPolicy:'no-referrer'});if(!r.ok)throw new Error('Discovery unavailable. Enter the public client key in Advanced connection.');const d=await r.json();if(d.service!=='nuvio'||!d.publishable_key)throw new Error('This server did not return Nuvio connection settings.');const backend=cleanServer(d.backend_url||base);if(new URL(base).origin!==new URL(backend).origin)throw new Error('Discovery points to a different server. Enter that backend URL explicitly.');return {server:backend,key:d.publishable_key,emailAuth:d.capabilities?.email_password_auth===true};}
+export async function discover(server,fetcher=globalThis.fetch){const base=cleanServer(server);let r;try{r=await fetchWithTimeout(fetcher,base+'/.well-known/nuvio',{credentials:'omit',referrerPolicy:'no-referrer'},12000);}catch(e){throw new Error(e.name==='TimeoutError'?e.message:'Cannot reach Nuvio. Try Wi-Fi or mobile data, and update Android System WebView.');}if(!r.ok)throw new Error('Nuvio connection settings are temporarily unavailable. Try again later.');const d=await r.json();if(d.service!=='nuvio'||!d.publishable_key)throw new Error('This server did not return Nuvio connection settings.');const backend=cleanServer(d.backend_url||base);if(new URL(base).origin!==new URL(backend).origin)throw new Error('Discovery points to a different server. Enter that backend URL explicitly.');return {server:backend,key:d.publishable_key,emailAuth:d.capabilities?.email_password_auth===true};}
