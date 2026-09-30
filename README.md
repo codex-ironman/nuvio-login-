@@ -15,7 +15,7 @@ Open http://localhost:3000. `npm test` checks the API adapter and copy behaviour
 ## Features
 
 - Connect multiple accounts and select a master.
-- Link-code login; email/password login for self-hosted servers that support it.
+- Nuvio ID/email and password login. Backend and public client configuration are discovered automatically; no API key entry.
 - Discover server configuration through `/.well-known/nuvio`, or supply a public client key manually.
 - Per-profile addon add/remove, URL change, display-name rename, enable/disable and order.
 - Create/rename profiles, set avatar colour, manage primary-addon inheritance.
@@ -26,9 +26,9 @@ Open http://localhost:3000. `npm test` checks the API adapter and copy behaviour
 
 ## Connecting real accounts
 
-Enter your backend URL (official default: `https://api.nuvio.tv`). The app tries Nuvio discovery. If it is unavailable, enter your backend's **publishable / anon client key** in Advanced connection. The official public client key is not included in this repository; obtain it from your Nuvio client configuration. Do not enter a secret or service-role key. Key and backend must belong to the same deployment.
+The sign-in form asks only for your Nuvio ID/email and password. Connection configuration comes from `https://api.nuvio.tv/.well-known/nuvio`. Discovery currently advertises email/password login support. The app sends credentials directly to Nuvio and does not store passwords. If Nuvio disables discovery or password authentication, a visible error is shown instead of a fake successful login. Each account must be signed in separately.
 
-For official accounts, use link-code sign-in on Nuvio's own login page. Direct email login is for compatible self-hosted servers. Each account must be signed in separately. The server must permit browser requests from the app's origin (CORS) and expose the RPCs used by the current Nuvio TV client. Unsupported endpoints produce visible errors; legacy table fallbacks are intentionally not attempted.
+The server must permit browser requests from the app's origin (CORS) and expose the RPCs used by the current Nuvio TV client. Unsupported endpoints produce visible errors; legacy table fallbacks are intentionally not attempted.
 
 ## Data and limitations
 

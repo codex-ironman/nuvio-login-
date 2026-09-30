@@ -1,0 +1,24 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.codexironman.nuviomanager'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.codexironman.nuviomanager'
+        minSdk 26
+        targetSdk 35
+        versionCode Integer.parseInt(System.getenv('NUVIO_VERSION_CODE') ?: '1')
+        versionName System.getenv('NUVIO_VERSION_NAME') ?: '1.0.0'
+    }
+    signingConfigs {
+        release {
+            if (System.getenv('NUVIO_KEYSTORE_PATH')) {
+                storeFile file(System.getenv('NUVIO_KEYSTORE_PATH'))
+                storePassword System.getenv('NUVIO_STORE_PASSWORD')
+                keyAlias System.getenv('NUVIO_KEY_ALIAS') ?: 'nuvio-manager'
+                keyPassword System.getenv('NUVIO_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
